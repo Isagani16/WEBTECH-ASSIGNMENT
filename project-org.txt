@@ -1,0 +1,1030 @@
+project org
+
+
+
+Paper View
+<?php
+
+namespace Core\Middleware;
+
+class Authenticated
+{
+    public function handle()
+    {
+        if (! $_SESSION['user'] ?? false) {
+            header('location: /');
+            exit();
+        }
+    }
+}
+
+<?php
+
+namespace Core\Middleware;
+
+class Guest
+{
+    public function handle()
+    {
+        if ($_SESSION['user'] ?? false) {
+            header('location: /');
+            exit();
+        }
+    }
+}
+
+<?php
+
+namespace Core\Middleware;
+
+class Middleware
+{
+    public const MAP = [
+        'guest' => Guest::class,
+        'auth' => Authenticated::class
+    ];
+
+    public static function resolve($key)
+    {
+        if (!$key) {
+            return;
+        }
+
+        $middleware = static::MAP[$key] ?? false;
+
+        if (!$middleware) {
+            throw new \Exception("No matching middleware found for key '{$key}'.");
+        }
+
+        (new $middleware)->handle();
+    }
+}
+
+
+<?php
+
+namespace Core;
+
+class App
+{
+    protected static $container;
+
+    public static function setContainer($container)
+    {
+        static::$container = $container;
+    }
+
+    public static function container()
+    {
+        return static::$container;
+    }
+
+    public static function bind($key, $resolver)
+    {
+        static::container()->bind($key, $resolver);
+    }
+
+    public static function resolve($key)
+    {
+        return static::container()->resolve($key);
+    }
+}
+
+<?php
+
+namespace Core;
+
+use Exception;
+
+class Container
+{
+    protected $bindings = [];
+
+    public function bind($key, $resolver)
+    {
+        $this->bindings[$key] = $resolver;
+    }
+
+    public function resolve($key)
+    {
+        if (!array_key_exists($key, $this->bindings)) {
+            throw new Exception("No matching binding found for {$key}");
+        }
+
+        $resolver = $this->bindings[$key];
+
+        return call_user_func($resolver);
+    }
+}
+
+<?php
+
+namespace Core;
+
+use PDO;
+
+class Database
+{
+    public $connection;
+    public $statement;
+
+    public function __construct($config, $username = 'root', $password = '')
+    {
+        $dsn = 'mysql:' . http_build_query($config, '', ';');
+
+        $this->connection = new PDO($dsn, $username, $password, [
+           PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+        ]);
+    }
+
+    public function query($query, $params = [])
+    {
+        $this->statement = $this->connection->prepare($query);
+
+        $this->statement->execute($params);
+
+        return $this;
+    }
+
+    public function get()
+    {
+        return $this->statement->fetchAll();
+    }
+
+    public function find()
+    {
+        return $this->statement->fetch();
+    }
+
+    public function findOrFail()
+    {
+        $result = $this->find();
+
+        if (! $result) {
+            abort();
+        }
+
+        return $result;
+    }
+}
+
+<?php
+
+namespace Core;
+
+class Response {
+    const NOT_FOUND = 404;
+    const FORBIDDEN = 403;
+}
+
+<?php
+
+namespace Core;
+
+class Response {
+    const NOT_FOUND = 404;
+    const FORBIDDEN = 403;
+}
+
+<?php
+
+namespace Core;
+
+use Core\Middleware\Authenticated;
+use Core\Middleware\Guest;
+use Core\Middleware\Middleware;
+
+class Router
+{
+    protected $routes = [];
+
+    public function add($method, $uri, $controller)
+    {
+        $this->routes[] = [
+            'uri' => $uri,
+            'controller' => $controller,
+            'method' => $method,
+            'middleware' => null
+        ];
+
+        return $this;
+    }
+
+    public function get($uri, $controller)
+    {
+        return $this->add('GET', $uri, $controller);
+    }
+
+    public function post($uri, $controller)
+    {
+        return $this->add('POST', $uri, $controller);
+    }
+
+    public function delete($uri, $controller)
+    {
+        return $this->add('DELETE', $uri, $controller);
+    }
+
+    public function patch($uri, $controller)
+    {
+        return $this->add('PATCH', $uri, $controller);
+    }
+
+    public function put($uri, $controller)
+    {
+        return $this->add('PUT', $uri, $controller);
+    }
+
+    public function only($key)
+    {
+        $this->routes[array_key_last($this->routes)]['middleware'] = $key;
+
+        return $this;
+    }
+
+    public function route($uri, $method)
+    {
+        foreach ($this->routes as $route) {
+            if ($route['uri'] === $uri && $route['method'] === strtoupper($method)) {
+                Middleware::resolve($route['middleware']);
+
+                return require base_path($route['controller']);
+            }
+        }
+
+        $this->abort();
+    }
+
+    protected function abort($code = 404)
+    {
+        http_response_code($code);
+
+        require base_path("views/{$code}.php");
+
+        die();
+    }
+}
+
+<?php
+
+namespace Core;
+
+class Validator
+{
+    public static function string($value, $min = 1, $max = INF)
+    {
+        $value = trim($value);
+
+        return strlen($value) >= $min && strlen($value) <= $max;
+    }
+
+    public static function email($value)
+    {
+        return filter_var($value, FILTER_VALIDATE_EMAIL);
+    }
+}
+
+<?php
+
+use Core\Response;
+
+function dd($value)
+{
+    echo "<pre>";
+    var_dump($value);
+    echo "</pre>";
+
+    die();
+}
+
+function urlIs($value)
+{
+    return $_SERVER['REQUEST_URI'] === $value;
+}
+
+function abort($code = 404)
+{
+    http_response_code($code);
+
+    require base_path("views/{$code}.php");
+
+    die();
+}
+
+function authorize($condition, $status = Response::FORBIDDEN)
+{
+    if (! $condition) {
+        abort($status);
+    }
+
+    return true;
+}
+
+function base_path($path)
+{
+    return BASE_PATH . $path;
+}
+
+function view($path, $attributes = [])
+{
+    extract($attributes);
+
+    require base_path('views/' . $path);
+}
+
+<?php
+
+view("notes/create.view.php", [
+    'heading' => 'Create Note',
+    'errors' => []
+]);
+
+<?php
+
+use Core\App;
+use Core\Database;
+
+$db = App::resolve(Database::class);
+
+$currentUserId = 1;
+
+$note = $db->query('select * from notes where id = :id', [
+    'id' => $_POST['id']
+])->findOrFail();
+
+authorize($note['user_id'] === $currentUserId);
+
+$db->query('delete from notes where id = :id', [
+    'id' => $_POST['id']
+]);
+
+header('location: /notes');
+exit();
+
+<?php
+
+use Core\App;
+use Core\Database;
+
+$db = App::resolve(Database::class);
+
+$currentUserId = 1;
+
+$note = $db->query('select * from notes where id = :id', [
+    'id' => $_GET['id']
+])->findOrFail();
+
+authorize($note['user_id'] === $currentUserId);
+
+view("notes/edit.view.php", [
+    'heading' => 'Edit Note',
+    'errors' => [],
+    'note' => $note
+]);
+
+<?php
+
+use Core\App;
+use Core\Database;
+
+$db = App::resolve(Database::class);
+$notes = $db->query('select * from notes where user_id = 1')->get();
+
+view("notes/index.view.php", [
+    'heading' => 'My Notes',
+    'notes' => $notes
+]);
+
+<?php
+
+use Core\App;
+use Core\Database;
+
+$db = App::resolve(Database::class);
+
+$currentUserId = 1;
+
+$note = $db->query('select * from notes where id = :id', [
+    'id' => $_GET['id']
+])->findOrFail();
+
+authorize($note['user_id'] === $currentUserId);
+
+view("notes/show.view.php", [
+    'heading' => 'Note',
+    'note' => $note
+]);
+
+<?php
+
+use Core\App;
+use Core\Validator;
+use Core\Database;
+
+$db = App::resolve(Database::class);
+$errors = [];
+
+if (! Validator::string($_POST['body'], 1, 1000)) {
+    $errors['body'] = 'A body of no more than 1,000 characters is required.';
+}
+
+if (! empty($errors)) {
+    return view("notes/create.view.php", [
+        'heading' => 'Create Note',
+        'errors' => $errors
+    ]);
+}
+
+$db->query('INSERT INTO notes(body, user_id) VALUES(:body, :user_id)', [
+    'body' => $_POST['body'],
+    'user_id' => 1
+]);
+
+header('location: /notes');
+die();
+
+<?php
+
+use Core\App;
+use Core\Database;
+use Core\Validator;
+
+$db = App::resolve(Database::class);
+
+$currentUserId = 222221;
+
+// find the corresponding note
+$note = $db->query('select * from notes where id = :id', [
+    'id' => $_POST['id']
+])->findOrFail();
+
+// authorize that the current user can edit the note
+authorize($note['user_id'] === $currentUserId);
+
+// validate the form
+$errors = [];
+
+if (! Validator::string($_POST['body'], 1, 10)) {
+    $errors['body'] = 'A body of no more than 1,000 characters is required.';
+}
+
+// if no validation errors, update the record in the notes database table.
+if (count($errors)) {
+    return view('notes/edit.view.php', [
+        'heading' => 'Edit Note',
+        'errors' => $errors,
+        'note' => $note
+    ]);
+}
+
+$db->query('update notes set body = :body where id = :id', [
+    'id' => $_POST['id'],
+    'body' => $_POST['body']
+]);
+
+// redirect the user
+header('location: /notes');
+die();
+
+<?php
+
+view('registration/create.view.php');
+
+<?php
+
+use Core\App;
+use Core\Database;
+use Core\Validator;
+
+$db = App::resolve(Database::class);
+
+$email = $_POST['email'];
+$password = $_POST['password'];
+
+$errors = [];
+if (!Validator::email($email)) {
+   $errors['email'] = 'Please provide a valid email address.';
+}
+
+if (!Validator::string($password, 7, 255)) {
+    $errors['password'] = 'Please provide a password of at least seven characters.';
+}
+
+if (! empty($errors)) {
+    return view('registration/create.view.php', [
+        'errors' => $errors
+    ]);
+}
+
+$user = $db->query('select * from users where email = :email', [
+    'email' => $email
+])->find();
+
+if ($user) {
+    header('location: /');
+    exit();
+} else {
+    $db->query('INSERT INTO users(email, password) VALUES(:email, :password)', [
+        'email' => $email,
+        'password' => $password // NEVER store database passwords in clear text. We'll fix this in the login form episode. :)
+    ]);
+
+    $_SESSION['user'] = [
+        'email' => $email
+    ];
+
+    header('location: /');
+    exit();
+}
+
+<?php
+
+view("about.view.php", [
+    'heading' => 'About Us',
+]);
+
+<?php
+
+view("contact.view.php", [
+    'heading' => 'Contact Us',
+]);
+
+<?php
+
+view("index.view.php", [
+    'heading' => 'Home',
+]);
+
+<?php
+
+session_start();
+
+const BASE_PATH = __DIR__.'/../';
+
+require BASE_PATH.'Core/functions.php';
+
+spl_autoload_register(function ($class) {
+    $class = str_replace('\\', DIRECTORY_SEPARATOR, $class);
+
+    require base_path("{$class}.php");
+});
+
+require base_path('bootstrap.php');
+
+$router = new \Core\Router();
+$routes = require base_path('routes.php');
+
+$uri = parse_url($_SERVER['REQUEST_URI'])['path'];
+$method = $_POST['_method'] ?? $_SERVER['REQUEST_METHOD'];
+
+$router->route($uri, $method);
+
+ 
+
+<?php require base_path('views/partials/head.php') ?>
+<?php require base_path('views/partials/nav.php') ?>
+<?php require base_path('views/partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <div class="md:grid md:grid-cols-3 md:gap-6">
+            <div class="mt-5 md:col-span-2 md:mt-0">
+                <form method="POST" action="/notes">
+                    <div class="shadow sm:overflow-hidden sm:rounded-md">
+                        <div class="space-y-6 bg-white px-4 py-5 sm:p-6">
+                            <div>
+                                <label
+                                    for="body"
+                                    class="block text-sm font-medium text-gray-700"
+                                >Body</label>
+
+                                <div class="mt-1">
+                                    <input
+                                        id="body"
+                                        name="body"
+                                        rows="3"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        placeholder="Here's an idea for a note..."
+                                    ><?= $_POST['body'] ?? '' ?></input>
+
+                                    <?php if (isset($errors['body'])) : ?>
+                                        <p class="text-red-500 text-xs mt-2"><?= $errors['body'] ?></p>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-50 px-4 py-3 text-right sm:px-6">
+                            <button
+                                type="submit"
+                                class="inline-flex justify-center rounded-md border border-transparent bg-indigo-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                            >
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</main>
+
+<?php require base_path('views/partials/footer.php') ?>
+
+<?php require base_path('views/partials/head.php') ?>
+<?php require base_path('views/partials/nav.php') ?>
+<?php require base_path('views/partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <div class="md:grid md:grid-cols-3 md:gap-6">
+            <div class="mt-5 md:col-span-2 md:mt-0">
+                <form method="POST" action="/notes">
+                    <div class="shadow sm:overflow-hidden sm:rounded-md">
+                        <div class="space-y-6 bg-white px-4 py-5 sm:p-6">
+                            <div>
+                                <label
+                                    for="body"
+                                    class="block text-sm font-medium text-gray-700"
+                                >Body</label>
+
+                                <div class="mt-1">
+                                    <input
+                                        id="body"
+                                        name="body"
+                                        rows="3"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        placeholder="Here's an idea for a note..."
+                                    ><?= $_POST['body'] ?? '' ?></input>
+
+                                    <?php if (isset($errors['body'])) : ?>
+                                        <p class="text-red-500 text-xs mt-2"><?= $errors['body'] ?></p>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-50 px-4 py-3 text-right sm:px-6">
+                            <button
+                                type="submit"
+                                class="inline-flex justify-center rounded-md border border-transparent bg-indigo-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                            >
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</main>
+
+<?php require base_path('views/partials/footer.php') ?>
+
+<?php require base_path('views/partials/head.php') ?>
+<?php require base_path('views/partials/nav.php') ?>
+<?php require base_path('views/partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <ul>
+            <?php foreach ($notes as $note) : ?>
+                <li>
+                    <a href="/note?id=<?= $note['id'] ?>" class="text-blue-500 hover:underline">
+                        <?= htmlspecialchars($note['body']) ?>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+
+        <p class="mt-6">
+            <a href="/notes/create" class="text-blue-500 hover:underline">Create Note</a>
+        </p>
+    </div>
+</main>
+
+<?php require base_path('views/partials/footer.php') ?>
+
+<?php require base_path('views/partials/head.php') ?>
+<?php require base_path('views/partials/nav.php') ?>
+<?php require base_path('views/partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <ul>
+            <?php foreach ($notes as $note) : ?>
+                <li>
+                    <a href="/note?id=<?= $note['id'] ?>" class="text-blue-500 hover:underline">
+                        <?= htmlspecialchars($note['body']) ?>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+
+        <p class="mt-6">
+            <a href="/notes/create" class="text-blue-500 hover:underline">Create Note</a>
+        </p>
+    </div>
+</main>
+
+<?php require base_path('views/partials/footer.php') ?>
+
+<header class="bg-white shadow">
+    <div class="mx-auto max-w-7xl py-6 px-4 sm:px-6 lg:px-8">
+        <h1 class="text-3xl font-bold tracking-tight text-gray-900"><?= $heading ?></h1>
+    </div>
+</header>
+
+</div>
+
+</body>
+</html>
+
+<!doctype html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <title>Demo</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+</head>
+
+<body class="h-full">
+    <div class="min-h-full">
+
+<nav class="bg-gray-800">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="flex h-16 items-center justify-between">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <img class="h-8 w-8" src="https://tailwindui.com/img/logos/mark.svg?color=indigo&shade=500" alt="Your Company">
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-4">
+                        <!-- Current: "bg-gray-900 text-white", Default: "text-gray-300 hover:bg-gray-700 hover:text-white" -->
+                        <a href="/" class="<?= urlIs('/') ? 'bg-gray-900 text-white' : 'text-gray-300' ?> hover:bg-gray-700 px-3 py-2 rounded-md text-sm font-medium">Home</a>
+                        <a href="/about" class="<?= urlIs('/about') ? 'bg-gray-900 text-white' : 'text-gray-300' ?> hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">About</a>
+                        <a href="/notes" class="<?= urlIs('/notes') ? 'bg-gray-900 text-white' : 'text-gray-300' ?> hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Notes</a>
+                        <a href="/contact" class="<?= urlIs('/contact') ? 'bg-gray-900 text-white' : 'text-gray-300' ?> hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Contact</a>
+                    </div>
+                </div>
+            </div>
+            <div class="hidden md:block">
+                <div class="ml-4 flex items-center md:ml-6">
+                    <button type="button" class="rounded-full bg-gray-800 p-1 text-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800">
+                        <span class="sr-only">View notifications</span>
+                        <!-- Heroicon name: outline/bell -->
+                        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                        </svg>
+                    </button>
+
+                    <!-- Profile dropdown -->
+                    <div class="relative ml-3">
+                        <div>
+                            <?php if ($_SESSION['user'] ?? false) : ?>
+                                <button type="button" class="flex max-w-xs items-center rounded-full bg-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800" id="user-menu-button" aria-expanded="false" aria-haspopup="true">
+                                    <span class="sr-only">Open user menu</span>
+
+                                    <img class="h-8 w-8 rounded-full" src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80" alt="">
+                                </button>
+                            <?php else : ?>
+                                <a href="/register" class="text-white">Register</a>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="-mr-2 flex md:hidden">
+                <!-- Mobile menu button -->
+                <button type="button" class="inline-flex items-center justify-center rounded-md bg-gray-800 p-2 text-gray-400 hover:bg-gray-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800" aria-controls="mobile-menu" aria-expanded="false">
+                    <span class="sr-only">Open main menu</span>
+                    <!--
+                      Heroicon name: outline/bars-3
+
+                      Menu open: "hidden", Menu closed: "block"
+                    -->
+                    <svg class="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                    </svg>
+                    <!--
+                      Heroicon name: outline/x-mark
+
+                      Menu open: "block", Menu closed: "hidden"
+                    -->
+                    <svg class="hidden h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile menu, show/hide based on menu state. -->
+    <div class="md:hidden" id="mobile-menu">
+        <div class="space-y-1 px-2 pt-2 pb-3 sm:px-3">
+            <!-- Current: "bg-gray-900 text-white", Default: "text-gray-300 hover:bg-gray-700 hover:text-white" -->
+            <a href="#" class="bg-gray-900 text-white block px-3 py-2 rounded-md text-base font-medium" aria-current="page">Dashboard</a>
+
+            <a href="#" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Team</a>
+
+            <a href="#" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Projects</a>
+
+            <a href="#" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Calendar</a>
+
+            <a href="#" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Reports</a>
+        </div>
+        <div class="border-t border-gray-700 pt-4 pb-3">
+            <div class="flex items-center px-5">
+                <div class="flex-shrink-0">
+                    <img class="h-10 w-10 rounded-full" src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80" alt="">
+                </div>
+                <div class="ml-3">
+                    <div class="text-base font-medium leading-none text-white">Tom Cook</div>
+                    <div class="text-sm font-medium leading-none text-gray-400">tom@example.com</div>
+                </div>
+                <button type="button" class="ml-auto flex-shrink-0 rounded-full bg-gray-800 p-1 text-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800">
+                    <span class="sr-only">View notifications</span>
+                    <!-- Heroicon name: outline/bell -->
+                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                    </svg>
+                </button>
+            </div>
+            <div class="mt-3 space-y-1 px-2">
+                <a href="#" class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white">Your Profile</a>
+
+                <a href="#" class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white">Settings</a>
+
+                <a href="#" class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white">Sign out</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<?php require base_path('views/partials/head.php') ?>
+<?php require base_path('views/partials/nav.php') ?>
+
+<main>
+    <div class="flex min-h-full items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+        <div class="w-full max-w-md space-y-8">
+            <div>
+                <img class="mx-auto h-12 w-auto" src="https://tailwindui.com/img/logos/mark.svg?color=indigo&shade=600"
+                     alt="Your Company">
+                <h2 class="mt-6 text-center text-3xl font-bold tracking-tight text-gray-900">Register for a new
+                    account</h2>
+            </div>
+
+            <form class="mt-8 space-y-6" action="/register" method="POST">
+                <div class="-space-y-px rounded-md shadow-sm">
+                    <div>
+                        <label for="email" class="sr-only">Email address</label>
+                        <input id="email" name="email" type="email" autocomplete="email" required
+                               class="relative block w-full appearance-none rounded-none rounded-t-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+                               placeholder="Email address">
+                    </div>
+
+                    <div>
+                        <label for="password" class="sr-only">Password</label>
+                        <input id="password" name="password" type="password" autocomplete="current-password" required
+                               class="relative block w-full appearance-none rounded-none rounded-b-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:z-10 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+                               placeholder="Password">
+                    </div>
+                </div>
+
+                <div>
+                    <button type="submit"
+                            class="group relative flex w-full justify-center rounded-md border border-transparent bg-indigo-600 py-2 px-4 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                    >
+                        Register
+                    </button>
+                </div>
+
+                <ul>
+                    <?php if (isset($errors['email'])) : ?>
+                        <li class="text-red-500 text-xs mt-2"><?= $errors['email'] ?></li>
+                    <?php endif; ?>
+
+                    <?php if (isset($errors['password'])) : ?>
+                        <li class="text-red-500 text-xs mt-2"><?= $errors['password'] ?></li>
+                    <?php endif; ?>
+                </ul>
+            </form>
+        </div>
+    </div>
+</main>
+
+<?php require base_path('views/partials/footer.php') ?>
+
+<?php require('partials/head.php') ?>
+<?php require('partials/nav.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <h1 class="text-2xl font-bold">You are not authorized to view this page.</h1>
+
+        <p class="mt-4">
+            <a href="/" class="text-blue-500 underline">Go back home.</a>
+        </p>
+    </div>
+</main>
+
+<?php require('partials/footer.php') ?>
+
+<?php require('partials/head.php') ?>
+<?php require('partials/nav.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <h1 class="text-2xl font-bold">Sorry. Page Not Found.</h1>
+
+        <p class="mt-4">
+            <a href="/" class="text-blue-500 underline">Go back home.</a>
+        </p>
+    </div>
+</main>
+
+<?php require('partials/footer.php') ?>
+
+<?php require('partials/head.php') ?>
+<?php require('partials/nav.php') ?>
+<?php require('partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <p>Hello. Welcome to the about page.</p>
+    </div>
+</main>
+
+<?php require('partials/footer.php') ?>
+
+<?php require('partials/head.php') ?>
+<?php require('partials/nav.php') ?>
+<?php require('partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <p>Hello. Welcome to the contact page.</p>
+    </div>
+</main>
+
+<?php require('partials/footer.php') ?>
+
+<?php require('partials/head.php') ?>
+<?php require('partials/nav.php') ?>
+<?php require('partials/banner.php') ?>
+
+<main>
+    <div class="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+        <p>Hello. Welcome to the home page.</p>
+    </div>
+</main>
+
+<?php require('partials/footer.php') ?>
+
+<?php
+
+use Core\App;
+use Core\Container;
+use Core\Database;
+
+$container = new Container();
+
+$container->bind('Core\Database', function () {
+    $config = require base_path('config.php');
+
+    return new Database($config['database']);
+});
+
+App::setContainer($container);
+
+<?php
+
+return [
+    'database' => [
+        'host' => 'localhost',
+        'port' => 3306,
+        'dbname' => 'myapp',
+        'charset' => 'utf8mb4'
+    ],
+
+    //
+];
+
+<?php
+
+$router->get('/', 'controllers/index.php');
+$router->get('/about', 'controllers/about.php');
+$router->get('/contact', 'controllers/contact.php');
+
+$router->get('/notes', 'controllers/notes/index.php')->only('auth');
+$router->get('/note', 'controllers/notes/show.php');
+$router->delete('/note', 'controllers/notes/destroy.php');
+
+$router->get('/note/edit', 'controllers/notes/edit.php');
+$router->patch('/note', 'controllers/notes/update.php');
+
+$router->get('/notes/create', 'controllers/notes/create.php');
+$router->post('/notes', 'controllers/notes/store.php');
+
+$router->get('/register', 'controllers/registration/create.php')->only('guest');
+$router->post('/register', 'controllers/registration/store.php');
